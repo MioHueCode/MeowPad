@@ -1,0 +1,35 @@
+# ---- 构建产物 ----
+build/
+app/build/
+*/build/
+.gradle/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+
+# 根目录散落的 gradle 编译中间文件
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# ---- Android ----
+*.apk
+*.aab
+*.ap_
+*.dex
+*.jks
+*.keystore
+!debug.keystore
+
+# ---- IDE ----
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+
+# ---- 其他 ----
+*.log
+/tmp/
