@@ -397,4 +397,5 @@
     <string name="ai_062">Insert AI Code</string>
     <string name="edit_090">Editing</string>
     <string name="edit_091">Reading</string>
+    <string name="edit_092">Microphone permission is required to record</string>
 </resources>

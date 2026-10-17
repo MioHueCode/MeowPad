@@ -2,7 +2,9 @@ package com.miohue.notepad.ui
 
 import android.content.SharedPreferences
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -25,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -39,6 +42,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 import com.miohue.notepad.R
 
 enum class SortMode { UPDATED, CREATED, TITLE }
@@ -388,13 +392,47 @@ fun NoteListScreen(
                     }
                 } else if (sorted.isEmpty()) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            when {
-                                onlyFavorite -> stringResource(R.string.list_016)
-                                query.isBlank() -> stringResource(R.string.list_017)
-                                else -> stringResource(R.string.list_018)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            // 小猫点缀：低透明度着色，作为空态插画而不喧宾夺主
+                            Box(
+                                contentAlignment = Alignment.Center,
+                                modifier = Modifier
+                                    .size(96.dp)
+                                    .clip(RoundedCornerShape(28.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.30f))
+                            ) {
+                                Image(
+                                    painter = painterResource(R.drawable.ic_meow_cat),
+                                    contentDescription = null,
+                                    colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(
+                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+                                    ),
+                                    modifier = Modifier.size(52.dp)
+                                )
                             }
-                        )
+                            Spacer(Modifier.height(20.dp))
+                            Text(
+                                when {
+                                    onlyFavorite -> stringResource(R.string.list_016)
+                                    query.isBlank() -> stringResource(R.string.list_017)
+                                    else -> stringResource(R.string.list_018)
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            if (query.isBlank() && !onlyFavorite) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(
+                                    "＋",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                                )
+                            }
+                        }
                     }
                 } else {
                     if (gridView) {
@@ -713,20 +751,32 @@ fun NoteCard(
 ) {
     val scheme = MaterialTheme.colorScheme
     var menuOpen by remember { mutableStateOf(false) }
+    // 选中态用 primaryContainer 无阴影 + 明显描边；普通态用 surface 微投影 + 极淡描边，
+    // 与主题统一圆角体系（MaterialTheme.shapes.medium=14dp）呼应，卡片层次更清晰。
+    val cardShape = RoundedCornerShape(16.dp)
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp)
             .combinedClickable(
                 onClick = { if (selectionMode) onSelect() else onClick() },
                 onLongClick = { if (!selectionMode) onLongPress() }
             ),
+        shape = cardShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) scheme.primaryContainer else scheme.surface
+            containerColor = if (isSelected) scheme.primaryContainer else scheme.surfaceContainerLow
         ),
-        elevation = CardDefaults.cardElevation(if (isSelected) 0.dp else 1.dp)
+        border = if (isSelected) {
+            BorderStroke(2.dp, scheme.primary)
+        } else {
+            BorderStroke(1.dp, scheme.outlineVariant.copy(alpha = 0.45f))
+        },
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isSelected) 0.dp else 1.dp,
+            pressedElevation = 0.dp
+        )
     ) {
-        Column(Modifier.padding(10.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 11.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (selectionMode) {
                     Icon(
@@ -848,12 +898,21 @@ fun DrawerContent(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "🐱 MeowPad",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_meow_cat),
+                        contentDescription = null,
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "MeowPad",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 IconButton(onClick = onSettings) {
                     Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.list_029), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

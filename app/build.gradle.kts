@@ -29,7 +29,8 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // 版本号不再带 -debug 后缀（用户要求显示为 1.9.0）
+            versionNameSuffix = ""
         }
     }
 
@@ -70,6 +71,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     implementation("androidx.navigation:navigation-compose:2.8.0")
+    // 对齐 Kori：WebViewAssetLoader 以 https 域供给本地音视频文件（WebView 不接受 file:// 视频）
+    implementation("androidx.webkit:webkit:1.16.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
 }

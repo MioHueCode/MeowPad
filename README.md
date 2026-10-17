@@ -57,12 +57,13 @@ Release 构建默认不包含签名配置，请自行在 `app/build.gradle.kts` 
 本项目采用 **GNU AGPL-3.0** 协议，详见 [LICENSE](LICENSE)。
 
 选择 AGPL-3.0 的原因：项目内嵌了 `kmark` Markdown 解析器
-（源自 JetBrains IntelliJ 平台，经 [Kori](https://github.com/MioHueCode) 工程整理），
+（源自 JetBrains IntelliJ 平台，经 [Kori](https://github.com/YangDai2003/Kori) 工程整理），
 且界面交互设计大量参考 Kori 项目，二者均为 AGPL-3.0 协议。
 依据 AGPL 的传染性条款，衍生作品需以相同协议发布。
 
 ## 致谢
 
 - [JetBrains IntelliJ Platform](https://github.com/JetBrains/intellij-community) — `kmark` Markdown 解析器
-- [Kori](https://github.com/MioHueCode) — 编辑器交互与视觉设计参考
+- [Kori](https://github.com/YangDai2003/Kori) — 编辑器交互与视觉设计参考
+- [Kotlin](https://kotlinlang.org/) / [Jetpack Compose](https://developer.android.com/jetpack/compose)
 - [Kotlin](https://kotlinlang.org/) / [Jetpack Compose](https://developer.android.com/jetpack/compose)

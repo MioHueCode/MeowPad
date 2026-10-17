@@ -9,10 +9,34 @@ captures/
 .cxx/
 local.properties
 
-# 根目录散落的 gradle 编译中间文件
+# 根目录散落的 gradle/AGP 编译缓存（本项目根目录曾被构建缓存污染）
+# 注意：以下目录用前导斜杠锚定到仓库根，避免误伤 app/src/main/java/com/ 等源码目录
 *.class
 *.jar
 !gradle/wrapper/gradle-wrapper.jar
+*.proto
+*.bin
+/META-INF/
+/NOTICE
+/about.html
+/__index__/
+/__tables__/
+/kotlin/
+/org/
+/groovy/
+/javax/
+/bsh/
+/api_database/
+/api-mapping.txt
+/androidx/
+/io/
+/lib/
+/com/
+/DebugProbesKt.bin
+/kotlin-tooling-metadata.json
+/jdeps-output.txt
+/gradle-app.setting
+/AndroidManifest.xml
 
 # ---- Android ----
 *.apk

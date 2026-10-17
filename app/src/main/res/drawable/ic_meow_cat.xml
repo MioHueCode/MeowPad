@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MeowPad 小猫点缀：圆脸 + 双耳 + 胡须，使用 currentTint 由 Compose 着色 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+
+    <!-- 左耳 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4.2,9.2 L5.6,3.4 C5.75,2.8 6.4,2.55 6.85,2.95 L10.1,5.9 C10.35,6.12 10.3,6.5 10,6.62 C9.1,7 8.3,7.6 7.7,8.35 C7.35,8.8 6.9,9.15 6.3,9.25 L4.85,9.5 C4.4,9.57 4.1,9.62 4.2,9.2 Z" />
+
+    <!-- 右耳 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M19.8,9.2 L18.4,3.4 C18.25,2.8 17.6,2.55 17.15,2.95 L13.9,5.9 C13.65,6.12 13.7,6.5 14,6.62 C14.9,7 15.7,7.6 16.3,8.35 C16.65,8.8 17.1,9.15 17.7,9.25 L19.15,9.5 C19.6,9.57 19.9,9.62 19.8,9.2 Z" />
+
+    <!-- 脸 -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,6.6 C7.9,6.6 4.6,9.5 4.6,13.4 C4.6,17.3 7.8,20.4 12,20.4 C16.2,20.4 19.4,17.3 19.4,13.4 C19.4,9.5 16.1,6.6 12,6.6 Z" />
+
+    <!-- 左眼（挖空） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M9.35,12.05 m-1.15,0 a1.15,1.35 0,1 1,2.3 0 a1.15,1.35 0,1 1,-2.3 0 Z" />
+
+    <!-- 右眼（挖空） -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M14.65,12.05 m-1.15,0 a1.15,1.35 0,1 1,2.3 0 a1.15,1.35 0,1 1,-2.3 0 Z" />
+
+    <!-- 鼻子 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,15.05 L12.95,16 L12,16.95 L11.05,16 Z" />
+
+    <!-- 左胡须 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.0,14.3 L3.5,13.9 L3.4,14.75 L5.95,15.15 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M6.05,16.0 L3.6,16.35 L3.7,17.2 L6.15,16.85 Z" />
+
+    <!-- 右胡须 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M18.0,14.3 L20.5,13.9 L20.6,14.75 L18.05,15.15 Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M17.95,16.0 L20.4,16.35 L20.3,17.2 L17.85,16.85 Z" />
+</vector>

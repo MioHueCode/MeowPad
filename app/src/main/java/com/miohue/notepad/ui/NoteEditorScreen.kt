@@ -454,6 +454,13 @@ fun NoteEditorScreen(
         }
     }
 
+    // 麦克风运行时权限：Android 6+ 直接构造 MediaRecorder 会抛异常，需先申请
+    val recordAudioPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) toast(context.getString(R.string.edit_092))
+    }
+
     fun doSave() {
         val base = original ?: Note.new()
         val updated = base.copy(
@@ -1491,23 +1498,30 @@ fun NoteEditorScreen(
                                 showAudioDialog = false
                                 android.widget.Toast.makeText(context, context.getString(R.string.edit_067), android.widget.Toast.LENGTH_SHORT).show()
                             } else {
-                                // 开始录音
-                                val dest = File(storageDir("audios"), "${System.currentTimeMillis()}.m4a")
-                                dest.parentFile?.mkdirs()
-                                runCatching {
-                                    val mr = android.media.MediaRecorder().apply {
-                                        setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                                        setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                                        setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                                        setOutputFile(dest.absolutePath)
-                                        prepare()
-                                        start()
+                                // 开始录音：先确认麦克风权限（未授权则弹系统请求）
+                                val hasMic = androidx.core.content.ContextCompat.checkSelfPermission(
+                                    context, android.Manifest.permission.RECORD_AUDIO
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                                if (!hasMic) {
+                                    recordAudioPermLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                                } else {
+                                    val dest = File(storageDir("audios"), "${System.currentTimeMillis()}.m4a")
+                                    dest.parentFile?.mkdirs()
+                                    runCatching {
+                                        val mr = android.media.MediaRecorder().apply {
+                                            setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                                            setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                                            setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                                            setOutputFile(dest.absolutePath)
+                                            prepare()
+                                            start()
+                                        }
+                                        mediaRecorder.value = mr
+                                        currentRecording = dest.absolutePath
+                                        isRecording = true
+                                    }.onFailure {
+                                        android.widget.Toast.makeText(context, context.getString(R.string.edit_res_006, it.message ?: ""), android.widget.Toast.LENGTH_SHORT).show()
                                     }
-                                    mediaRecorder.value = mr
-                                    currentRecording = dest.absolutePath
-                                    isRecording = true
-                                }.onFailure {
-                                    android.widget.Toast.makeText(context, context.getString(R.string.edit_res_006, it.message ?: ""), android.widget.Toast.LENGTH_SHORT).show()
                                 }
                             }
                         }) {
@@ -2001,7 +2015,7 @@ private fun ReadModeAttachments(
     }
 }
 
-// ==================== 内联视频播放器 (原生 VideoView + Compose 自绘控件) ====================
+// ==================== 内联视频播放器 (对齐 Kori：WebView + HTML <video controls>) ====================
 
 private fun formatMs(ms: Long): String {
     val totalSec = ms / 1000
@@ -2019,229 +2033,214 @@ private fun InlineVideoPlayer(
     scheme: androidx.compose.material3.ColorScheme,
     onRemove: (() -> Unit)? = null
 ) {
+    // 视频播放实现要点（这是让 WebView 能真正播起来的关键）：
+    //  WebView 的 <video> 由 Chromium 媒体栈驱动，必须走 HTTP Range(206) 分段请求，
+    //  否则读不到元数据、无法 seek，表现就是“点了没反应/黑屏”。
+    //  androidx WebViewAssetLoader 的 PathHandler.handle(path) 拿不到请求头，无法实现 Range，
+    //  因此这里不用 AssetLoader，改为在 WebViewClient.shouldInterceptRequest 里
+    //  读取 requestHeaders 的 Range 头，自行返回 206 局部响应。
     val ctx = LocalContext.current
-    val uri = remember(videoPath) {
-        androidx.core.content.FileProvider.getUriForFile(
-            ctx, ctx.packageName + ".fileprovider", File(videoPath)
-        )
-    }
-    // 播放状态
-    var isPlaying by remember { mutableStateOf(false) }
-    var duration by remember { mutableStateOf(0L) }
-    var position by remember { mutableStateOf(0L) }
-    var isPrepared by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf(false) }
-    var controlsVisible by remember { mutableStateOf(true) }
-    var buffering by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    fun hideControlsLater() {
-        scope.launch {
-            kotlinx.coroutines.delay(3500)
-            if (isPlaying) controlsVisible = false
-        }
-    }
-
-    // VideoView 引用（用于播放/暂停/seek）
-    var vv by remember { mutableStateOf<android.widget.VideoView?>(null) }
-    // 每帧轮询进度（仅播放时）
-    LaunchedEffect(isPlaying) {
-        while (isPlaying) {
-            vv?.let {
-                position = it.currentPosition.toLong()
-                if (it.duration > 0) duration = it.duration.toLong()
-            }
-            kotlinx.coroutines.delay(250)
-        }
-    }
-    DisposableEffect(Unit) {
-        onDispose { vv?.stopPlayback() }
-    }
-
-    // 快进/快退 10 秒（双击左半=退10s，右半=进10s）
-    fun seekBy(deltaMs: Long) {
-        val v = vv ?: return
-        val target = (position + deltaMs).coerceIn(0, if (duration > 0) duration else Long.MAX_VALUE)
-        v.seekTo(target.toInt())
-        position = target
-        controlsVisible = true
-        hideControlsLater()
-    }
-
-    fun togglePlay() {
-        val v = vv ?: return
-        if (error) { error = false; isPrepared = false; v.setVideoURI(uri); return }
-        if (isPlaying) {
-            v.pause(); isPlaying = false; controlsVisible = true
-        } else {
-            if (!isPrepared) { v.setVideoURI(uri); v.start(); isPrepared = true }
-            else if (position >= duration && duration > 0) { v.seekTo(0); v.start() }
-            else v.start()
-            isPlaying = true
-            hideControlsLater()
-        }
-    }
+    val videoFile = remember(videoPath) { File(videoPath) }
+    var failed by remember(videoPath) { mutableStateOf(!videoFile.exists()) }
+    val domain = "appassets.androidplatform.net"
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
             .background(Color.Black)
             .aspectRatio(16f / 9f)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = {
-                        controlsVisible = !controlsVisible
-                        if (controlsVisible) hideControlsLater()
-                    },
-                    onDoubleTap = { offset ->
-                        // 双击左半=快退10s，右半=快进10s
-                        val half = size.width / 2f
-                        if (offset.x < half) seekBy(-10000) else seekBy(10000)
-                    }
-                )
-            }
     ) {
-        // 视频画面
-        AndroidView(
-            factory = { vctx ->
-                android.widget.VideoView(vctx).apply {
-                    setVideoURI(uri)
-                    setOnPreparedListener { mp ->
-                        isPrepared = true
-                        duration = mp.duration.toLong()
-                        mp.isLooping = false
-                        if (isPlaying) start()
-                    }
-                    setOnErrorListener { _, _, _ ->
-                        error = true; isPlaying = false; controlsVisible = true; true
-                    }
-                    setOnInfoListener { _, what, _ ->
-                        when (what) {
-                            android.media.MediaPlayer.MEDIA_INFO_BUFFERING_START -> { buffering = true; true }
-                            android.media.MediaPlayer.MEDIA_INFO_BUFFERING_END -> { buffering = false; true }
-                            else -> false
+        if (!failed) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = { vctx ->
+                    WebView(vctx).apply {
+                        setBackgroundColor(android.graphics.Color.BLACK)
+                        isVerticalScrollBarEnabled = false
+                        isHorizontalScrollBarEnabled = false
+                        settings.apply {
+                            javaScriptEnabled = true
+                            domStorageEnabled = true
+                            allowFileAccess = true
+                            allowContentAccess = true
+                            mediaPlaybackRequiresUserGesture = false
+                            useWideViewPort = true
+                            loadWithOverviewMode = false
+                        }
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldInterceptRequest(
+                                view: WebView,
+                                request: android.webkit.WebResourceRequest
+                            ): android.webkit.WebResourceResponse? {
+                                val u = request.url ?: return null
+                                if (u.host != domain) return null
+                                val p = u.path ?: return null
+                                val prefix = "/media/"
+                                if (!p.startsWith(prefix)) return null
+                                val name = p.removePrefix(prefix)
+                                if (name.isEmpty() || name.contains("..")) return null
+                                val f = File(videoFile.parentFile, name)
+                                if (!f.isFile) return null
+                                return serveFileWithRange(f, request.requestHeaders)
+                            }
+
+                            override fun onReceivedError(
+                                view: WebView,
+                                request: android.webkit.WebResourceRequest,
+                                error: android.webkit.WebResourceError
+                            ) {
+                                // 只处理主文档级错误，子资源错误不应整块判死
+                                if (request.isForMainFrame) failed = true
+                            }
                         }
                     }
-                    setOnCompletionListener {
-                        isPlaying = false; position = duration; controlsVisible = true
+                },
+                update = { wv ->
+                    // 只在路径变化时重载，避免每次重组都重新 loadData 打断播放
+                    val tag = wv.tag as? String
+                    if (tag != videoPath) {
+                        wv.tag = videoPath
+                        val html = """
+                            <!DOCTYPE html><html><head>
+                            <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+                            <style>
+                              html,body{margin:0;padding:0;background:#000;height:100%;width:100%;overflow:hidden;}
+                              video{width:100%;height:100%;object-fit:contain;display:block;background:#000;outline:none;}
+                            </style></head><body>
+                            <video src="https://$domain/media/${videoFile.name}"
+                                   controls playsinline webkit-playsinline preload="metadata"></video>
+                            </body></html>
+                        """.trimIndent()
+                        wv.loadDataWithBaseURL("https://$domain/", html, "text/html", "UTF-8", null)
                     }
-                }.also { vv = it }
-            },
-            update = { vv = it },
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // 加载圈（未准备/缓冲中且非错误）
-        if ((!isPrepared || buffering) && !error) {
-            CircularProgressIndicator(
-                color = Color.White,
-                strokeWidth = 2.dp,
-                modifier = Modifier.align(Alignment.Center).size(30.dp)
+                }
             )
-        }
-        // 错误重试
-        if (error) {
+        } else {
+            // 文件缺失：给外开入口，避免一块黑屏无从下手
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.align(Alignment.Center)
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.fillMaxSize()
             ) {
-                Icon(Icons.Default.Refresh, null, tint = Color.White, modifier = Modifier.size(28.dp))
-                Spacer(Modifier.height(4.dp))
-                Text(stringResource(R.string.edit_074), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                Icon(Icons.Default.Movie, null, tint = Color.White, modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(6.dp))
+                Text(fileName, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 2)
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { openFile(ctx, videoPath) }) {
+                    Text(stringResource(R.string.edit_001), color = Color.White)
+                }
             }
         }
 
-        // 控件层（点击切换显隐）
-        AnimatedVisibility(
-            visible = controlsVisible,
-            enter = fadeIn(), exit = fadeOut(),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(Modifier.fillMaxSize()) {
-                // 顶部：文件名 + 外开 + 移除
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                        .background(
-                            Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))
-                        )
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
-                    Icon(Icons.Default.Movie, null, tint = Color.White, modifier = Modifier.size(14.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        fileName, maxLines = 1,
-                        style = MaterialTheme.typography.labelSmall, color = Color.White,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = {
-                        runCatching {
-                            ctx.startActivity(
-                                android.content.Intent(android.content.Intent.ACTION_VIEW)
-                                    .setDataAndType(uri, "video/*")
-                                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            )
-                        }.onFailure { android.widget.Toast.makeText(ctx, ctx.getString(R.string.edit_075), android.widget.Toast.LENGTH_SHORT).show() }
-                    }, modifier = Modifier.size(28.dp)) {
-                        Icon(Icons.Default.OpenInNew, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                    }
-                    if (onRemove != null) {
-                        IconButton(onClick = onRemove, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-                // 中央播放/暂停
-                if (isPrepared || error) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.5f))
-                            .clickable { togglePlay() }
-                    ) {
-                        Icon(
-                            if (error) Icons.Default.Refresh
-                            else if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            null, tint = Color.White, modifier = Modifier.size(30.dp)
-                        )
-                    }
-                }
-                // 底部：进度条 + 时间
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))
-                        )
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                ) {
-                    Slider(
-                        value = if (duration > 0) position.coerceIn(0, duration).toFloat() else 0f,
-                        onValueChange = { position = it.toLong() },
-                        onValueChangeFinished = { vv?.seekTo(position.toInt()) },
-                        valueRange = 0f..(if (duration > 0) duration.toFloat() else 1f).coerceAtLeast(1f),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                        ),
-                        modifier = Modifier.fillMaxWidth().height(22.dp)
-                    )
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                        Text(formatMs(position), style = MaterialTheme.typography.labelSmall, color = Color.White)
-                        Spacer(Modifier.weight(1f))
-                        Text(formatMs(duration), style = MaterialTheme.typography.labelSmall, color = Color.White)
-                    }
-                }
+        // 文件名角标（不拦截触摸）
+        Text(
+            fileName,
+            maxLines = 1,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White.copy(alpha = 0.85f),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(6.dp)
+                .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 4.dp, vertical = 1.dp)
+        )
+        // 编辑态移除按钮
+        if (onRemove != null) {
+            IconButton(
+                onClick = onRemove,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(2.dp)
+                    .size(28.dp)
+                    .background(Color.Black.copy(alpha = 0.35f), CircleShape)
+            ) {
+                Icon(Icons.Default.Close, null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
         }
     }
+}
+
+/**
+ * 返回支持 HTTP Range 的 WebResourceResponse。
+ * Chromium 媒体栈依赖 206 分段响应：首次通常请求 bytes=0-，之后按需 seek。
+ * 不支持 Range 时表现为视频黑屏/点播放无反应。
+ */
+private fun serveFileWithRange(
+    f: File,
+    headers: Map<String, String>?
+): android.webkit.WebResourceResponse {
+    val total = f.length()
+    val mime = guessMime(f.name)
+    val range = headers?.entries?.firstOrNull { it.key.equals("Range", ignoreCase = true) }?.value
+    val baseHeaders = mutableMapOf(
+        "Accept-Ranges" to "bytes",
+        "Cache-Control" to "no-store"
+    )
+    try {
+        if (range != null && range.startsWith("bytes=")) {
+            val spec = range.removePrefix("bytes=").trim()
+            val parts = spec.split("-", limit = 2)
+            var start = parts.getOrNull(0)?.trim()?.toLongOrNull() ?: 0L
+            var end = parts.getOrNull(1)?.trim()?.toLongOrNull() ?: (total - 1)
+            if (start < 0) start = 0
+            if (end >= total) end = total - 1
+            if (start > end || start >= total) {
+                // 416 Range Not Satisfiable
+                baseHeaders["Content-Range"] = "bytes */$total"
+                return android.webkit.WebResourceResponse(
+                    mime, null, 416, "Range Not Satisfiable", baseHeaders, java.io.ByteArrayInputStream(ByteArray(0))
+                )
+            }
+            val len = end - start + 1
+            val fis = java.io.FileInputStream(f)
+            var skipped = 0L
+            while (skipped < start) {
+                val s = fis.skip(start - skipped)
+                if (s <= 0) break
+                skipped += s
+            }
+            val body = java.io.ByteArrayOutputStream(len.toInt().coerceAtMost(8 * 1024 * 1024))
+            val buf = ByteArray(64 * 1024)
+            var remaining = len
+            while (remaining > 0) {
+                val want = minOf(remaining, buf.size.toLong()).toInt()
+                val n = fis.read(buf, 0, want)
+                if (n <= 0) break
+                body.write(buf, 0, n)
+                remaining -= n
+            }
+            fis.close()
+            baseHeaders["Content-Range"] = "bytes $start-$end/$total"
+            baseHeaders["Content-Length"] = len.toString()
+            return android.webkit.WebResourceResponse(
+                mime, null, 206, "Partial Content", baseHeaders, java.io.ByteArrayInputStream(body.toByteArray())
+            )
+        }
+        // 无 Range：返回整文件
+        baseHeaders["Content-Length"] = total.toString()
+        return android.webkit.WebResourceResponse(
+            mime, null, 200, "OK", baseHeaders, java.io.FileInputStream(f)
+        )
+    } catch (t: Throwable) {
+        return android.webkit.WebResourceResponse(
+            mime, null, 500, "Internal Error", baseHeaders, java.io.ByteArrayInputStream(ByteArray(0))
+        )
+    }
+}
+
+// 按扩展名推断 MIME（AssetLoader 供给的视频需要正确类型，否则 <video> 不识别）
+private fun guessMime(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+    "mp4", "m4v" -> "video/mp4"
+    "webm" -> "video/webm"
+    "mkv" -> "video/x-matroska"
+    "mov" -> "video/quicktime"
+    "avi" -> "video/x-msvideo"
+    "3gp" -> "video/3gpp"
+    "ts" -> "video/mp2t"
+    "flv" -> "video/x-flv"
+    "m4a" -> "audio/mp4"
+    "mp3" -> "audio/mpeg"
+    else -> "application/octet-stream"
 }
 
 // ==================== 链接预览卡片 (阅读模式内联 WebView , 不跳外部浏览器) ====================
