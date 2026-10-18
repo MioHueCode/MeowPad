@@ -5,6 +5,7 @@ import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -558,35 +559,132 @@ class NoteRepository(context: Context) {
         return backupToFile(target)
     }
 
-    /** 上传当前备份到 WebDAV，返回是否成功。 */
-    fun cloudBackup(context: Context, url: String, user: String, pass: String): Boolean {
-        if (url.isBlank()) return false
-        val file = backupDir().listFiles { f -> f.isFile && f.name.endsWith(".json") }
-            ?.sortedBy { it.lastModified() }?.lastOrNull() ?: return false
-        val client = OkHttpClient.Builder().build()
-        val credentials = if (user.isBlank()) "" else Credentials.basic(user, pass)
-        val req = Request.Builder().url(url).put(file.readBytes().toRequestBody())
-            .header("Authorization", credentials).header("Content-Type", "application/json").build()
-        return runCatching { client.newCall(req).execute().use { it.body?.string() } }.isSuccess
+    /**
+     * 把用户填写的 WebDAV 地址规范为「具体文件」URL。
+     *
+     * 用户通常填的是目录（如 https://host/dav/），直接把目录当 PUT/GET 目标会失败：
+     * PUT 到目录 → 405/409，GET 到目录 → 返回 HTML 目录列表而非备份 JSON。
+     * 因此目录（以 / 结尾）时自动拼上备份文件名。
+     */
+    private fun webdavFileUrl(url: String, fileName: String): String {
+        val u = url.trim().trimEnd('/')
+        if (u.isEmpty()) return url
+        val last = u.substringAfterLast('/')
+        // 目录判定：结尾 "/"，或最后一段没有扩展名（如 .../dav、.../backup）。
+        // 只认 "/" 会漏掉 .../dav 这种写法——直接 PUT 到目录会被重定向或 405。
+        val isDir = !last.contains('.')
+        return if (isDir) "$u/$fileName" else u
     }
 
-    /** 从 WebDAV 下载备份并恢复，返回是否成功。 */
-    fun cloudRestore(context: Context, url: String, user: String, pass: String): Boolean {
-        if (url.isBlank()) return false
-        val client = OkHttpClient.Builder().build()
-        val credentials = if (user.isBlank()) "" else Credentials.basic(user, pass)
-        val req = Request.Builder().url(url).get()
-            .header("Authorization", credentials).header("Accept", "application/json").build()
+    /** 统一的认证失败提示：401/403 多半是凭据问题，给出可操作方向。 */
+    private fun authHint(code: Int, message: String): String = when (code) {
+        401 -> "HTTP 401 认证失败 · 请核对用户名与密码。" +
+            "InfiniCLOUD / TeraCloud 等网盘需在「应用连接 / Apps Connection」中单独生成 WebDAV 密码，" +
+            "直接填登录密码会一直 401。"
+        403 -> "HTTP 403 禁止访问 · 账号可能无写权限，或该路径不可写。"
+        405 -> "HTTP 405 方法不被允许 · 地址可能指向目录而非文件，请检查 URL 是否以 / 结尾。"
+        404 -> "HTTP 404 路径不存在 · 请检查 WebDAV 地址拼写与服务端目录是否存在。"
+        409 -> "HTTP 409 冲突 · 目标父目录可能不存在，请先在网盘里建好目录。"
+        507 -> "HTTP 507 存储空间不足。"
+        else -> "HTTP $code $message"
+    }
+
+    /** 测试 WebDAV 连接与认证：PROPFIND Depth:0（需认证，能区分连通性与凭据是否正确）。 */
+    fun cloudTest(url: String, user: String, pass: String): Pair<Boolean, String> {
+        if (url.isBlank()) return false to "WebDAV 地址为空"
         return runCatching {
-            val req2 = Request.Builder().url(url).get()
-                .header("Authorization", credentials).header("Accept", "application/json").build()
-            client.newCall(req2).execute().use { resp ->
-                if (!resp.isSuccessful) return@runCatching false
+            val client = OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val target = if (url.trim().endsWith("/")) url.trim() else url.trim() + "/"
+            val builder = Request.Builder().url(target)
+                .method("PROPFIND", null)
+                .header("Depth", "0")
+            if (user.isNotBlank()) {
+                builder.header("Authorization", Credentials.basic(user, pass))
+            }
+            client.newCall(builder.build()).execute().use { resp ->
+                if (resp.isSuccessful) true to "连接成功（HTTP ${resp.code}）"
+                else false to authHint(resp.code, resp.message)
+            }
+        }.getOrElse { e ->
+            false to (e.javaClass.simpleName + ": " + (e.message ?: ""))
+        }
+    }
+
+    /**
+     * 上传当前备份到 WebDAV。
+     *
+     * 注意：本方法内部是阻塞式网络调用，**必须在 IO 线程执行**（调用方用
+     * withContext(Dispatchers.IO) 包裹），否则 Android 会抛
+     * NetworkOnMainThreadException，被 runCatching 吞掉后表现为"上传失败"。
+     *
+     * 返回 Pair(是否成功, 失败原因)；成功时原因为空串。
+     */
+    fun cloudBackup(context: Context, url: String, user: String, pass: String): Pair<Boolean, String> {
+        if (url.isBlank()) return false to "WebDAV 地址为空"
+        val file = backupDir().listFiles { f -> f.isFile && f.name.endsWith(".json") }
+            ?.sortedBy { it.lastModified() }?.lastOrNull()
+            ?: return false to "本地没有备份文件，请先执行「立即备份」"
+        return runCatching {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            // 目录地址需补全文件名，否则 PUT 打到目录上会失败
+            val target = webdavFileUrl(url, "meowpad-backup.json")
+            val builder = Request.Builder().url(target)
+                .put(file.readBytes().toRequestBody(
+                    "application/json".toMediaTypeOrNull()
+                ))
+                .header("Content-Type", "application/json")
+            if (user.isNotBlank()) {
+                builder.header("Authorization", Credentials.basic(user, pass))
+            }
+            client.newCall(builder.build()).execute().use { resp ->
+                // 关键：必须判断 HTTP 状态码。原先只判 isSuccess(无异常)，
+                // 401/403/404/500 都会被当成"上传成功"。
+                if (resp.isSuccessful) true to ""
+                else false to authHint(resp.code, resp.message)
+            }
+        }.getOrElse { e ->
+            false to (e.javaClass.simpleName + ": " + (e.message ?: ""))
+        }
+    }
+
+    /**
+     * 从 WebDAV 下载备份并恢复。
+     *
+     * 与 cloudBackup 相同：阻塞式网络调用，**必须在 IO 线程执行**。
+     * 返回 Pair(是否成功, 失败原因)；成功时原因为空串。
+     */
+    fun cloudRestore(context: Context, url: String, user: String, pass: String): Pair<Boolean, String> {
+        if (url.isBlank()) return false to "WebDAV 地址为空"
+        return runCatching {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            // 与上传对称：目录地址需补全文件名，否则 GET 到的是 HTML 目录列表
+            val target = webdavFileUrl(url, "meowpad-backup.json")
+            val builder = Request.Builder().url(target).get()
+                .header("Accept", "application/json")
+            if (user.isNotBlank()) {
+                builder.header("Authorization", Credentials.basic(user, pass))
+            }
+            client.newCall(builder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    return@runCatching false to authHint(resp.code, resp.message)
+                }
                 val tmp = File(context.cacheDir, "cloud_restore.json")
                 tmp.outputStream().use { out -> resp.body?.byteStream()?.copyTo(out) }
-                restoreFromFile(tmp)
+                val n = restoreFromFile(tmp)
+                if (n > 0) true to "" else false to "备份内容为空或格式无法识别"
             }
-        }.isSuccess
+        }.getOrElse { e ->
+            false to (e.javaClass.simpleName + ": " + (e.message ?: ""))
+        }
     }
 
     private fun readNotes(from: File): List<Note> =

@@ -420,4 +420,7 @@
     <string name="set_098">About MeowPad</string>
     <string name="set_099">Local-first, nothing uploaded to any server</string>
     <string name="set_100">View full license</string>
+    <string name="set_101">Test Connection</string>
+    <string name="set_102">Verify address and credentials</string>
+    <string name="set_103">Testing…</string>
 </resources>

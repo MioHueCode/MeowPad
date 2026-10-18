@@ -92,6 +92,8 @@ import com.miohue.notepad.data.NoteRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -812,20 +814,42 @@ private fun BackupPaneContent(prefs: SharedPreferences, repo: NoteRepository, co
             onClick = { showRestorePicker = true })
         status?.let { Text(it, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(16.dp)) }
         SettingsHeader(stringResource(R.string.set_063))
+        // 测试连接：PROPFIND Depth:0，能直接区分「网络不通」与「凭据错误」，
+        // 避免用户靠反复上传试探账号密码是否可用。
+        ListPaneItem(isSelected = false, title = stringResource(R.string.set_101),
+            description = stringResource(R.string.set_102), icon = Icons.Default.Cloud,
+            onClick = {
+                status = context.getString(R.string.set_103)
+                scope.launch {
+                    val (ok, reason) = withContext(Dispatchers.IO) {
+                        repo.cloudTest(webdavUrl, webdavUser, webdavPass)
+                    }
+                    status = reason
+                }
+            })
         ListPaneItem(isSelected = false, title = stringResource(R.string.set_064), description = stringResource(R.string.set_065), icon = Icons.Default.Upload,
             onClick = {
                 status = context.getString(R.string.set_066)
                 scope.launch {
-                    val result = repo.cloudBackup(context, webdavUrl, webdavUser, webdavPass)
-                    status = if (result) context.getString(R.string.set_067) else context.getString(R.string.set_068)
+                    // cloudBackup 是阻塞式网络调用，必须在 IO 线程执行，
+                    // 否则抛 NetworkOnMainThreadException（此前"上传失败"的真正原因）
+                    val (ok, reason) = withContext(Dispatchers.IO) {
+                        repo.cloudBackup(context, webdavUrl, webdavUser, webdavPass)
+                    }
+                    status = if (ok) context.getString(R.string.set_067)
+                             else context.getString(R.string.set_068) + (if (reason.isNotBlank()) " · $reason" else "")
                 }
             })
         ListPaneItem(isSelected = false, title = stringResource(R.string.set_069), description = stringResource(R.string.set_070), icon = Icons.Default.Download,
             onClick = {
                 status = context.getString(R.string.set_071)
                 scope.launch {
-                    val result = repo.cloudRestore(context, webdavUrl, webdavUser, webdavPass)
-                    status = if (result) context.getString(R.string.set_072) else context.getString(R.string.web_012)
+                    // 同上：阻塞网络调用必须在 IO 线程
+                    val (ok, reason) = withContext(Dispatchers.IO) {
+                        repo.cloudRestore(context, webdavUrl, webdavUser, webdavPass)
+                    }
+                    status = if (ok) context.getString(R.string.set_072)
+                             else context.getString(R.string.web_012) + (if (reason.isNotBlank()) " · $reason" else "")
                 }
             })
         OutlinedTextField(
@@ -929,6 +953,22 @@ fun WarningDialog(title: String, message: String, onCancel: () -> Unit, onConfir
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FileBrowserPicker(dir: File = File("/storage/emulated/0/MeowPad"), onBack: () -> Unit, onPick: (File) -> Unit) {
+    // 必须放在 Dialog 里：本组件内部是 Scaffold + fillMaxSize 的 LazyColumn，
+    // 而调用方位于 SettingsPaneOverlay 的 verticalScroll 容器中，该容器给子项的
+    // 高度约束是 Infinity(Int.MAX_VALUE)，导致测量时抛
+    // IllegalStateException: Size(994 x 2147483647) is out of range（本地恢复闪退根因）。
+    // Dialog 提供独立的、有界的窗口约束，彻底规避该问题。
+    Dialog(
+        onDismissRequest = onBack,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        FileBrowserPickerContent(dir = dir, onBack = onBack, onPick = onPick)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FileBrowserPickerContent(dir: File, onBack: () -> Unit, onPick: (File) -> Unit) {
     var currentDir by remember { mutableStateOf(dir) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableStateOf(0) }
@@ -960,7 +1000,10 @@ fun FileBrowserPicker(dir: File = File("/storage/emulated/0/MeowPad"), onBack: (
         )
     }
 
-    Scaffold(containerColor = Color.Transparent, contentWindowInsets = WindowInsets(0, 0, 0, 0), topBar = {
+    // Dialog 没有自带背景，containerColor 必须给不透明色：
+    // 之前用 Color.Transparent，下层备份面板会透过来，两层文字重叠（截图问题）。
+    // 用 surfaceContainer 与 SettingsPaneOverlay 面板同色，视觉一致。
+    Scaffold(containerColor = MaterialTheme.colorScheme.surfaceContainer, contentWindowInsets = WindowInsets(0, 0, 0, 0), topBar = {
         TopAppBar(windowInsets = WindowInsets(0, 0, 0, 0), title = { Text(stringResource(R.string.set_076)) }, navigationIcon = {
             IconButton(onClick = {
                 if (currentDir == dir) {
@@ -1124,16 +1167,22 @@ fun BackupSettingsScreen(prefs: SharedPreferences, repo: NoteRepository, context
                 onClick = {
                     status = context.getString(R.string.set_066)
                     scope.launch {
-                        val result = repo.cloudBackup(context, webdavUrl, webdavUser, webdavPass)
-                        status = if (result) context.getString(R.string.set_067) else context.getString(R.string.set_068)
+                        val (ok, reason) = withContext(Dispatchers.IO) {
+                            repo.cloudBackup(context, webdavUrl, webdavUser, webdavPass)
+                        }
+                        status = if (ok) context.getString(R.string.set_067)
+                                 else context.getString(R.string.set_068) + (if (reason.isNotBlank()) " · $reason" else "")
                     }
                 })
             ListPaneItem(isSelected = false, title = stringResource(R.string.set_069), description = stringResource(R.string.set_070), icon = Icons.Default.Download,
                 onClick = {
                     status = context.getString(R.string.set_071)
                     scope.launch {
-                        val result = repo.cloudRestore(context, webdavUrl, webdavUser, webdavPass)
-                        status = if (result) context.getString(R.string.set_072) else context.getString(R.string.web_012)
+                        val (ok, reason) = withContext(Dispatchers.IO) {
+                            repo.cloudRestore(context, webdavUrl, webdavUser, webdavPass)
+                        }
+                        status = if (ok) context.getString(R.string.set_072)
+                                 else context.getString(R.string.web_012) + (if (reason.isNotBlank()) " · $reason" else "")
                     }
                 })
             // WebDAV 配置输入

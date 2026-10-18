@@ -424,4 +424,7 @@
     <string name="set_098">关于 MeowPad</string>
     <string name="set_099">本地优先，数据不上传服务器</string>
     <string name="set_100">查看协议全文</string>
+    <string name="set_101">测试连接</string>
+    <string name="set_102">验证地址与账号密码是否可用</string>
+    <string name="set_103">正在测试…</string>
 </resources>
