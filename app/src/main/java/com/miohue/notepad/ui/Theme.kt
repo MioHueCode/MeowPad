@@ -6,8 +6,10 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -24,6 +26,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
 import com.miohue.notepad.R
 import com.miohue.notepad.ui.theme.DarkBlackColors
 import com.miohue.notepad.ui.theme.DarkBlueColors
@@ -273,10 +276,22 @@ fun NotePadTheme(
 
     val scaledTypography = remember(fontScale) { Typography().withScaledFontSizes(fontScale) }
 
+    // 统一圆角体系：比 M3 默认更圆润，卡片/对话框/输入框视觉一致
+    val appShapes = remember {
+        Shapes(
+            extraSmall = RoundedCornerShape(6.dp),
+            small = RoundedCornerShape(10.dp),
+            medium = RoundedCornerShape(14.dp),
+            large = RoundedCornerShape(20.dp),
+            extraLarge = RoundedCornerShape(28.dp)
+        )
+    }
+
     CompositionLocalProvider(LocalAppConfig provides AppConfig(darkMode, amoledMode, fontScale)) {
         MaterialTheme(
             colorScheme = finalColorScheme,
             typography = scaledTypography,
+            shapes = appShapes,
             content = content
         )
     }

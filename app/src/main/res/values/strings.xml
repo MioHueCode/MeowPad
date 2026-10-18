@@ -103,7 +103,7 @@
     <string name="edit_045">编程模式</string>
     <string name="edit_046">分享笔记</string>
     <string name="edit_047">分享失败</string>
-    <string name="edit_048">🐱 概览</string>
+    <string name="edit_048">概览</string>
     <string name="edit_049">关闭</string>
     <string name="edit_050">创建于</string>
     <string name="edit_051">更新于</string>
@@ -402,4 +402,26 @@
     <string name="edit_090">编辑中</string>
     <string name="edit_091">阅读中</string>
     <string name="edit_092">需要麦克风权限才能录音</string>
+    <string name="set_079">应用信息</string>
+    <string name="set_080">版本</string>
+    <string name="set_081">包名</string>
+    <string name="set_082">构建类型</string>
+    <string name="set_083">运行环境</string>
+    <string name="set_084">系统版本</string>
+    <string name="set_085">设备型号</string>
+    <string name="set_086">处理器架构</string>
+    <string name="set_087">技术栈</string>
+    <string name="set_088">数据存储</string>
+    <string name="set_089">存储根目录</string>
+    <string name="set_090">点按复制路径</string>
+    <string name="set_091">开源协议</string>
+    <string name="set_092">项目主页</string>
+    <string name="set_093">致谢</string>
+    <string name="set_094">已复制到剪贴板</string>
+    <string name="set_095">构建时间</string>
+    <string name="set_096">调试版</string>
+    <string name="set_097">发布版</string>
+    <string name="set_098">关于 MeowPad</string>
+    <string name="set_099">本地优先，数据不上传服务器</string>
+    <string name="set_100">查看协议全文</string>
 </resources>

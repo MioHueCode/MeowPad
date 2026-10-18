@@ -103,7 +103,7 @@
     <string name="edit_045">Code mode</string>
     <string name="edit_046">Share note</string>
     <string name="edit_047">Share failed</string>
-    <string name="edit_048">🐱 Overview</string>
+    <string name="edit_048">Overview</string>
     <string name="edit_049">Close</string>
     <string name="edit_050">Created</string>
     <string name="edit_051">Updated</string>
@@ -398,4 +398,26 @@
     <string name="edit_090">Editing</string>
     <string name="edit_091">Reading</string>
     <string name="edit_092">Microphone permission is required to record</string>
+    <string name="set_079">App Info</string>
+    <string name="set_080">Version</string>
+    <string name="set_081">Package</string>
+    <string name="set_082">Build Type</string>
+    <string name="set_083">Environment</string>
+    <string name="set_084">Android</string>
+    <string name="set_085">Device</string>
+    <string name="set_086">ABI</string>
+    <string name="set_087">Tech Stack</string>
+    <string name="set_088">Storage</string>
+    <string name="set_089">Storage Root</string>
+    <string name="set_090">Tap to copy path</string>
+    <string name="set_091">License</string>
+    <string name="set_092">Project Home</string>
+    <string name="set_093">Credits</string>
+    <string name="set_094">Copied to clipboard</string>
+    <string name="set_095">Build Time</string>
+    <string name="set_096">Debug</string>
+    <string name="set_097">Release</string>
+    <string name="set_098">About MeowPad</string>
+    <string name="set_099">Local-first, nothing uploaded to any server</string>
+    <string name="set_100">View full license</string>
 </resources>

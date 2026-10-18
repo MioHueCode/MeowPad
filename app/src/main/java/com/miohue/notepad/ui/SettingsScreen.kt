@@ -1,7 +1,11 @@
 package com.miohue.notepad.ui
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.content.SharedPreferences
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -180,8 +184,9 @@ fun SettingsScreen(
                 ))
                 // 关于
                 ListPaneSection(items = listOf {
-                    ListPaneItem(isSelected = false, title = stringResource(R.string.set_011),
-                        description = "MeowPad  v$APP_VERSION_NAME", icon = Icons.Default.Info)
+                    ListPaneItem(isSelected = pane == "about", title = stringResource(R.string.set_011),
+                        description = "MeowPad  v$APP_VERSION_NAME", icon = Icons.Default.Info,
+                        onClick = { pane = "about" })
                 })
                 Spacer(Modifier.height(24.dp))
             }
@@ -207,6 +212,9 @@ fun SettingsScreen(
         }
         SettingsPaneOverlay(visible = pane == "ai", title = stringResource(R.string.ai_022), onDismiss = { pane = null }) {
             AiPaneContent(prefs)
+        }
+        SettingsPaneOverlay(visible = pane == "about", title = stringResource(R.string.set_011), onDismiss = { pane = null }) {
+            AboutPaneContent(context, repo)
         }
         if (showLangDialog) {
             LanguageDialog(
@@ -1155,4 +1163,181 @@ fun BackupSettingsScreen(prefs: SharedPreferences, repo: NoteRepository, context
             }
         }
     }
+}
+
+
+/** 关于面板：应用信息 / 运行环境 / 技术栈 / 数据存储 / 开源协议 / 致谢 */
+@Composable
+private fun AboutPaneContent(context: Context, repo: NoteRepository) {
+    val pkgInfo = remember {
+        runCatching {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        }.getOrNull()
+    }
+    val versionName = pkgInfo?.versionName ?: APP_VERSION_NAME
+    val appInfo = remember { context.applicationInfo }
+    val isDebug = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    val rootPath = remember { repo.rootDir().absolutePath }
+    // APK 文件的修改时间约等于构建时间
+    val buildTime = remember {
+        runCatching {
+            val f = java.io.File(appInfo.sourceDir)
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(f.lastModified()))
+        }.getOrDefault("-")
+    }
+    val abis = remember { Build.SUPPORTED_ABIS.joinToString(", ") }
+
+    fun copyText(text: String) {
+        runCatching {
+            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+            cm?.setPrimaryClip(ClipData.newPlainText("MeowPad", text))
+            android.widget.Toast.makeText(
+                context, context.getString(R.string.set_094), android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun openUrl(url: String) {
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        }
+    }
+
+    // ---------- 应用信息 ----------
+    SettingsHeader(stringResource(R.string.set_079))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = stringResource(R.string.set_080),
+            description = "MeowPad  v$versionName",
+            icon = Icons.Default.Info,
+            onClick = { copyText(versionName) }
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_081),
+            description = context.packageName,
+            icon = Icons.Default.Android,
+            onClick = { copyText(context.packageName) }
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_082),
+            description = if (isDebug) {
+                stringResource(R.string.set_096)
+            } else {
+                stringResource(R.string.set_097)
+            },
+            icon = Icons.Default.Build
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_095),
+            description = buildTime,
+            icon = Icons.Default.Schedule,
+            onClick = { copyText(buildTime) }
+        )
+    }
+
+    // ---------- 运行环境 ----------
+    SettingsHeader(stringResource(R.string.set_083))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = stringResource(R.string.set_084),
+            description = "Android ${Build.VERSION.RELEASE}  (API ${Build.VERSION.SDK_INT})",
+            icon = Icons.Default.PhoneAndroid
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_085),
+            description = "${Build.MANUFACTURER} ${Build.MODEL}",
+            icon = Icons.Default.Smartphone,
+            onClick = { copyText("${Build.MANUFACTURER} ${Build.MODEL}") }
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_086),
+            description = abis,
+            icon = Icons.Default.Memory,
+            onClick = { copyText(abis) }
+        )
+    }
+
+    // ---------- 技术栈 ----------
+    SettingsHeader(stringResource(R.string.set_087))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = "Kotlin + Jetpack Compose",
+            description = "UI / 协程 / 状态管理",
+            icon = Icons.Default.Code
+        )
+        DetailPaneItem(
+            title = "Media3 ExoPlayer",
+            description = "本地音视频解码与播放",
+            icon = Icons.Default.PlayCircleOutline
+        )
+        DetailPaneItem(
+            title = "kmark",
+            description = "Markdown 解析（JetBrains IntelliJ Platform，AGPL-3.0）",
+            icon = Icons.Default.TextSnippet
+        )
+        DetailPaneItem(
+            title = "OkHttp + Coil",
+            description = "网络请求 / 图片加载",
+            icon = Icons.Default.CloudQueue
+        )
+    }
+
+    // ---------- 数据存储 ----------
+    SettingsHeader(stringResource(R.string.set_088))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = stringResource(R.string.set_089),
+            description = rootPath,
+            icon = Icons.Default.Folder,
+            onClick = { copyText(rootPath) }
+        )
+        Text(
+            text = stringResource(R.string.set_090),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 8.dp)
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_099),
+            description = null,
+            icon = Icons.Default.Lock
+        )
+    }
+
+    // ---------- 开源协议 ----------
+    SettingsHeader(stringResource(R.string.set_091))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = "GNU AGPL-3.0",
+            description = stringResource(R.string.set_100),
+            icon = Icons.Default.Gavel,
+            onClick = { openUrl("https://github.com/MioHueCode/MeowPad/blob/master/LICENSE") }
+        )
+        DetailPaneItem(
+            title = stringResource(R.string.set_092),
+            description = "github.com/MioHueCode/MeowPad",
+            icon = Icons.Default.Link,
+            onClick = { openUrl("https://github.com/MioHueCode/MeowPad") }
+        )
+    }
+
+    // ---------- 致谢 ----------
+    SettingsHeader(stringResource(R.string.set_093))
+    Column(Modifier.padding(horizontal = 16.dp)) {
+        DetailPaneItem(
+            title = "Kori",
+            description = "编辑器交互与视觉设计参考",
+            icon = Icons.Default.FavoriteBorder,
+            onClick = { openUrl("https://github.com/YangDai2003/Kori") }
+        )
+        DetailPaneItem(
+            title = "JetBrains IntelliJ Platform",
+            description = "kmark Markdown 解析器",
+            icon = Icons.Default.MenuBook,
+            onClick = { openUrl("https://github.com/JetBrains/intellij-community") }
+        )
+    }
+    Spacer(Modifier.height(24.dp))
 }

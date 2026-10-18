@@ -15,6 +15,9 @@ android {
         targetSdk = 34
         versionCode = 9
         versionName = "1.9.0"
+        // 体积优化：应用只提供中文/英文两套文案，但依赖库（Compose、media3、Coil 等）
+        // 自带数十种语言资源，会把 resources.arsc 撑大。这里只保留实际用到的语言。
+        resourceConfigurations += listOf("zh", "en")
     }
 
     buildTypes {
@@ -31,6 +34,15 @@ android {
             applicationIdSuffix = ".debug"
             // 版本号不再带 -debug 后缀（用户要求显示为 1.9.0）
             versionNameSuffix = ""
+            // 体积优化：material-icons-extended 带入 8528×2 个图标类（classes.dex 解压后约 42MB），
+            // 实际仅用 137 个。R8 shrink 可精确剔除。此前卡死原因是堆过小导致 GC 抖动
+            // （-Xmx2048m 处理 42MB dex，30s 仅耗 0.04s CPU），已上调至 -Xmx4096m。
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
 
@@ -64,15 +76,15 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
 
     implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    debugImplementation("androidx.compose.ui:ui-tooling")
-
     implementation("androidx.navigation:navigation-compose:2.8.0")
-    // 对齐 Kori：WebViewAssetLoader 以 https 域供给本地音视频文件（WebView 不接受 file:// 视频）
-    implementation("androidx.webkit:webkit:1.16.0")
+    // 视频播放：media3/ExoPlayer，直连系统 MediaCodec，自带原生 PlayerView 控制条。
+    // 此前 WebView 的 HTML5 <video> 在本机（H.264 High@5.0 + yuvj420p）解不出画面，
+    // 而系统 MediaCodec 解码正常（TextureView 版曾成功出图），故改用 media3。
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.6.0")
 }

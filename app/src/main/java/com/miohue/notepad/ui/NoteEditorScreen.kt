@@ -8,6 +8,7 @@ import android.webkit.WebViewClient
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.basicMarquee
@@ -104,6 +105,7 @@ import com.miohue.notepad.ReminderReceiver
 import com.miohue.notepad.data.*
 import java.io.File
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.painterResource
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1251,13 +1253,24 @@ fun NoteEditorScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text(
+                                Row(
                                     modifier = Modifier.padding(start = 12.dp),
-                                    text = stringResource(R.string.edit_048),
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.Bold
-                                )
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Image(
+                                        painter = painterResource(R.drawable.ic_meow_cat),
+                                        contentDescription = null,
+                                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(scheme.primary),
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.edit_048),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                                 IconButton(onClick = { isSideSheetOpen = false }) {
                                     Icon(Icons.Default.Close, contentDescription = stringResource(R.string.edit_049))
                                 }
@@ -2033,90 +2046,80 @@ private fun InlineVideoPlayer(
     scheme: androidx.compose.material3.ColorScheme,
     onRemove: (() -> Unit)? = null
 ) {
-    // 视频播放实现要点（这是让 WebView 能真正播起来的关键）：
-    //  WebView 的 <video> 由 Chromium 媒体栈驱动，必须走 HTTP Range(206) 分段请求，
-    //  否则读不到元数据、无法 seek，表现就是“点了没反应/黑屏”。
-    //  androidx WebViewAssetLoader 的 PathHandler.handle(path) 拿不到请求头，无法实现 Range，
-    //  因此这里不用 AssetLoader，改为在 WebViewClient.shouldInterceptRequest 里
-    //  读取 requestHeaders 的 Range 头，自行返回 206 局部响应。
+    // 播放方案：media3/ExoPlayer + 原生 PlayerView。
+    // 背景：本机 WebView 的 HTML5 <video> 对 H.264 High@5.0 + yuvj420p 解不出画面（纯黑、
+    // 无控制条），而系统 MediaCodec 解码正常（早期 TextureView 版可出图）。ExoPlayer 直接
+    // 走系统 MediaCodec，自带 PlayerView 控制条，是 Android 本地播放的标准方案。
+    // 视频先镜像到应用私有 cacheDir，避免外部存储读取权限问题。
     val ctx = LocalContext.current
-    val videoFile = remember(videoPath) { File(videoPath) }
-    var failed by remember(videoPath) { mutableStateOf(!videoFile.exists()) }
-    val domain = "appassets.androidplatform.net"
+    val mirrorDir = remember { File(ctx.cacheDir, "vid").apply { runCatching { mkdirs() } } }
+    var file by remember(videoPath) { mutableStateOf<File?>(null) }
+    var failed by remember(videoPath) { mutableStateOf(false) }
+
+    LaunchedEffect(videoPath) {
+        file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val src = File(videoPath)
+                if (!src.isFile) return@runCatching null
+                val dst = File(mirrorDir, src.name)
+                if (!dst.exists() || dst.length() != src.length()) {
+                    src.inputStream().use { i -> dst.outputStream().use { o -> i.copyTo(o) } }
+                }
+                dst
+            }.getOrNull().also { if (it == null) failed = true }
+        }
+    }
+
+    val exoPlayer = remember(videoPath) {
+        androidx.media3.exoplayer.ExoPlayer.Builder(ctx).build().apply {
+            repeatMode = androidx.media3.common.Player.REPEAT_MODE_OFF
+            volume = 1f
+        }
+    }
+
+    // 解码失败（编码不支持/文件异常）时降级为外开入口
+    DisposableEffect(exoPlayer) {
+        val listener = object : androidx.media3.common.Player.Listener {
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                failed = true
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose {
+            runCatching { exoPlayer.removeListener(listener) }
+            runCatching { exoPlayer.release() }
+        }
+    }
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
             .background(Color.Black)
-            .aspectRatio(16f / 9f)
+            .aspectRatio(3f / 4f)
     ) {
-        if (!failed) {
+        val f = file
+        if (f != null && !failed) {
+            LaunchedEffect(f) {
+                runCatching {
+                    exoPlayer.setMediaItem(
+                        androidx.media3.common.MediaItem.fromUri(android.net.Uri.fromFile(f))
+                    )
+                    exoPlayer.prepare()
+                }.onFailure { failed = true }
+            }
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { vctx ->
-                    WebView(vctx).apply {
+                    androidx.media3.ui.PlayerView(vctx).apply {
+                        player = exoPlayer
+                        useController = true
+                        setShowBuffering(androidx.media3.ui.PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                         setBackgroundColor(android.graphics.Color.BLACK)
-                        isVerticalScrollBarEnabled = false
-                        isHorizontalScrollBarEnabled = false
-                        settings.apply {
-                            javaScriptEnabled = true
-                            domStorageEnabled = true
-                            allowFileAccess = true
-                            allowContentAccess = true
-                            mediaPlaybackRequiresUserGesture = false
-                            useWideViewPort = true
-                            loadWithOverviewMode = false
-                        }
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(
-                                view: WebView,
-                                request: android.webkit.WebResourceRequest
-                            ): android.webkit.WebResourceResponse? {
-                                val u = request.url ?: return null
-                                if (u.host != domain) return null
-                                val p = u.path ?: return null
-                                val prefix = "/media/"
-                                if (!p.startsWith(prefix)) return null
-                                val name = p.removePrefix(prefix)
-                                if (name.isEmpty() || name.contains("..")) return null
-                                val f = File(videoFile.parentFile, name)
-                                if (!f.isFile) return null
-                                return serveFileWithRange(f, request.requestHeaders)
-                            }
-
-                            override fun onReceivedError(
-                                view: WebView,
-                                request: android.webkit.WebResourceRequest,
-                                error: android.webkit.WebResourceError
-                            ) {
-                                // 只处理主文档级错误，子资源错误不应整块判死
-                                if (request.isForMainFrame) failed = true
-                            }
-                        }
                     }
                 },
-                update = { wv ->
-                    // 只在路径变化时重载，避免每次重组都重新 loadData 打断播放
-                    val tag = wv.tag as? String
-                    if (tag != videoPath) {
-                        wv.tag = videoPath
-                        val html = """
-                            <!DOCTYPE html><html><head>
-                            <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
-                            <style>
-                              html,body{margin:0;padding:0;background:#000;height:100%;width:100%;overflow:hidden;}
-                              video{width:100%;height:100%;object-fit:contain;display:block;background:#000;outline:none;}
-                            </style></head><body>
-                            <video src="https://$domain/media/${videoFile.name}"
-                                   controls playsinline webkit-playsinline preload="metadata"></video>
-                            </body></html>
-                        """.trimIndent()
-                        wv.loadDataWithBaseURL("https://$domain/", html, "text/html", "UTF-8", null)
-                    }
-                }
+                update = { view -> view.player = exoPlayer }
             )
         } else {
-            // 文件缺失：给外开入口，避免一块黑屏无从下手
+            // 镜像失败 / 解码失败：给外开入口，避免黑屏无从下手
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center,
@@ -2158,89 +2161,6 @@ private fun InlineVideoPlayer(
             }
         }
     }
-}
-
-/**
- * 返回支持 HTTP Range 的 WebResourceResponse。
- * Chromium 媒体栈依赖 206 分段响应：首次通常请求 bytes=0-，之后按需 seek。
- * 不支持 Range 时表现为视频黑屏/点播放无反应。
- */
-private fun serveFileWithRange(
-    f: File,
-    headers: Map<String, String>?
-): android.webkit.WebResourceResponse {
-    val total = f.length()
-    val mime = guessMime(f.name)
-    val range = headers?.entries?.firstOrNull { it.key.equals("Range", ignoreCase = true) }?.value
-    val baseHeaders = mutableMapOf(
-        "Accept-Ranges" to "bytes",
-        "Cache-Control" to "no-store"
-    )
-    try {
-        if (range != null && range.startsWith("bytes=")) {
-            val spec = range.removePrefix("bytes=").trim()
-            val parts = spec.split("-", limit = 2)
-            var start = parts.getOrNull(0)?.trim()?.toLongOrNull() ?: 0L
-            var end = parts.getOrNull(1)?.trim()?.toLongOrNull() ?: (total - 1)
-            if (start < 0) start = 0
-            if (end >= total) end = total - 1
-            if (start > end || start >= total) {
-                // 416 Range Not Satisfiable
-                baseHeaders["Content-Range"] = "bytes */$total"
-                return android.webkit.WebResourceResponse(
-                    mime, null, 416, "Range Not Satisfiable", baseHeaders, java.io.ByteArrayInputStream(ByteArray(0))
-                )
-            }
-            val len = end - start + 1
-            val fis = java.io.FileInputStream(f)
-            var skipped = 0L
-            while (skipped < start) {
-                val s = fis.skip(start - skipped)
-                if (s <= 0) break
-                skipped += s
-            }
-            val body = java.io.ByteArrayOutputStream(len.toInt().coerceAtMost(8 * 1024 * 1024))
-            val buf = ByteArray(64 * 1024)
-            var remaining = len
-            while (remaining > 0) {
-                val want = minOf(remaining, buf.size.toLong()).toInt()
-                val n = fis.read(buf, 0, want)
-                if (n <= 0) break
-                body.write(buf, 0, n)
-                remaining -= n
-            }
-            fis.close()
-            baseHeaders["Content-Range"] = "bytes $start-$end/$total"
-            baseHeaders["Content-Length"] = len.toString()
-            return android.webkit.WebResourceResponse(
-                mime, null, 206, "Partial Content", baseHeaders, java.io.ByteArrayInputStream(body.toByteArray())
-            )
-        }
-        // 无 Range：返回整文件
-        baseHeaders["Content-Length"] = total.toString()
-        return android.webkit.WebResourceResponse(
-            mime, null, 200, "OK", baseHeaders, java.io.FileInputStream(f)
-        )
-    } catch (t: Throwable) {
-        return android.webkit.WebResourceResponse(
-            mime, null, 500, "Internal Error", baseHeaders, java.io.ByteArrayInputStream(ByteArray(0))
-        )
-    }
-}
-
-// 按扩展名推断 MIME（AssetLoader 供给的视频需要正确类型，否则 <video> 不识别）
-private fun guessMime(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
-    "mp4", "m4v" -> "video/mp4"
-    "webm" -> "video/webm"
-    "mkv" -> "video/x-matroska"
-    "mov" -> "video/quicktime"
-    "avi" -> "video/x-msvideo"
-    "3gp" -> "video/3gpp"
-    "ts" -> "video/mp2t"
-    "flv" -> "video/x-flv"
-    "m4a" -> "audio/mp4"
-    "mp3" -> "audio/mpeg"
-    else -> "application/octet-stream"
 }
 
 // ==================== 链接预览卡片 (阅读模式内联 WebView , 不跳外部浏览器) ====================
