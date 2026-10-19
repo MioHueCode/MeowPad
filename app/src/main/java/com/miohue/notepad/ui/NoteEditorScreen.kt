@@ -81,6 +81,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -862,8 +863,6 @@ fun NoteEditorScreen(
                                     .fillMaxSize()
                                     .verticalScroll(rememberScrollState())
                             ) {
-                                // 链接预览 (点击链接后的内联 WebView 预览, 不跳外部浏览器)
-                                val linkPreviewUrl = remember { mutableStateOf<String?>(null) }
                                 if (content.isEmpty()) {
                                     Text(
                                         stringResource(R.string.edit_036),
@@ -878,30 +877,25 @@ fun NoteEditorScreen(
                                         when (seg) {
                                             is InlineSegment.Text -> {
                                                 // 代码模式下用语法高亮渲染，否则保留 URL 高亮
-                                                val linkText = remember(seg.text, codeMode) {
+                                                // SelectionContainer + Text：长按可选中复制；
+                                                // 链接点击由 LinkAnnotation 的 linkInteractionListener 接管 → 内置浏览器
+                                                val linkText = remember(seg.text, codeMode, onOpenUrl) {
                                                     if (codeMode) buildCodeHighlightAnnotatedString(seg.text, scheme)
-                                                    else buildLinkAnnotatedString(seg.text, scheme.primary)
+                                                    else buildLinkAnnotatedString(seg.text, scheme.primary, onOpenUrl)
                                                 }
-                                                ClickableText(
-                                                    text = linkText,
-                                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                                        color = scheme.onSurface,
-                                                        lineHeight = 26.sp
-                                                    ),
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        // 阅读模式正文加宽左右边距，避免文字整体贴左（对齐 Kori 书本式排版）
-                                                        .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 8.dp),
-                                                    onClick = { offset ->
-                                                        linkText
-                                                            .getLinkAnnotations(offset, offset)
-                                                            .firstOrNull()?.let { annotation ->
-                                                                if (annotation is LinkAnnotation.Url) {
-                                                                    linkPreviewUrl.value = annotation.url
-                                                                }
-                                                            }
-                                                    }
-                                                )
+                                                SelectionContainer {
+                                                    Text(
+                                                        text = linkText,
+                                                        style = MaterialTheme.typography.bodyLarge.copy(
+                                                            color = scheme.onSurface,
+                                                            lineHeight = 26.sp
+                                                        ),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            // 阅读模式正文加宽左右边距，避免文字整体贴左（对齐 Kori 书本式排版）
+                                                            .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 8.dp)
+                                                    )
+                                                }
                                             }
                                             is InlineSegment.Image -> AsyncImage(
                                                 model = File(seg.path),
@@ -935,21 +929,6 @@ fun NoteEditorScreen(
                                                 Text(seg.name, maxLines = 1, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface, modifier = Modifier.weight(1f))
                                                 Icon(Icons.Default.OpenInNew, stringResource(R.string.web_010), tint = scheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                                             }
-                                        }
-                                    }
-                                    // 内联链接预览
-                                    AnimatedVisibility(visible = linkPreviewUrl.value != null) {
-                                        val url = linkPreviewUrl.value
-                                        if (url != null) {
-                                            LinkPreviewCard(
-                                                url = url,
-                                                scheme = scheme,
-                                                onDismiss = { linkPreviewUrl.value = null },
-                                                onOpenBrowser = {
-                                                    // 统一走内置浏览器（不再跳外部浏览器）
-                                                    onOpenUrl(url)
-                                                }
-                                            )
                                         }
                                     }
                                 }
@@ -1834,7 +1813,11 @@ private fun InlineAudioRow(path: String, name: String, scheme: androidx.compose.
 /** 识别正文中的 URL / 邮箱，生成带 LinkAnnotation 的 AnnotatedString（阅读模式点击跳转）。 */
 private val urlRegex = Regex("""(https?://[^\s，。；、！？「」『』（）【】""'<>]+|www\.[^\s，。；、！？「」『』（）【】""'<>]+)""")
 
-private fun buildLinkAnnotatedString(text: String, linkColor: Color): androidx.compose.ui.text.AnnotatedString =
+private fun buildLinkAnnotatedString(
+    text: String,
+    linkColor: Color,
+    onLinkClick: (String) -> Unit
+): androidx.compose.ui.text.AnnotatedString =
     buildAnnotatedString {
         append(text)
         urlRegex.findAll(text).forEach { m ->
@@ -1845,7 +1828,11 @@ private fun buildLinkAnnotatedString(text: String, linkColor: Color): androidx.c
                     url = url,
                     styles = TextLinkStyles(
                         style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)
-                    )
+                    ),
+                    // 拦截默认 openURI（会跳系统浏览器），统一走内置浏览器
+                    linkInteractionListener = LinkInteractionListener { link ->
+                        (link as? LinkAnnotation.Url)?.let { onLinkClick(it.url) }
+                    }
                 ),
                 start = m.range.first,
                 end = m.range.last + 1
@@ -2164,64 +2151,6 @@ private fun InlineVideoPlayer(
 }
 
 // ==================== 链接预览卡片 (阅读模式内联 WebView , 不跳外部浏览器) ====================
-
-@Composable
-private fun LinkPreviewCard(
-    url: String,
-    scheme: androidx.compose.material3.ColorScheme,
-    onDismiss: () -> Unit,
-    onOpenBrowser: () -> Unit
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column {
-            // WebView 预览 (高度 180dp)
-            AndroidView(
-                factory = { vctx ->
-                    WebView(vctx).apply {
-                        settings.javaScriptEnabled = false
-                        settings.builtInZoomControls = false
-                        settings.displayZoomControls = false
-                        settings.loadWithOverviewMode = true
-                        settings.useWideViewPort = true
-                        settings.domStorageEnabled = false
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        webViewClient = WebViewClient()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(180.dp),
-                update = { view -> view.loadUrl(url) }
-            )
-            // URL 栏 + 操作按钮
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    url,
-                    maxLines = 1,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = onOpenBrowser) { Text(stringResource(R.string.web_001)) }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
-                    Icon(Icons.Default.Close, contentDescription = stringResource(R.string.edit_049), tint = scheme.onSurfaceVariant)
-                }
-            }
-        }
-    }
-}
 
 // ==================== EditorLineNumbers (Kori EditorLineNumbers.kt 复刻: Canvas 覆盖层) ====================
 

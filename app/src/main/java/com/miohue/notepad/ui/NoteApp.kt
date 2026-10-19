@@ -177,7 +177,7 @@ fun NoteApp(context: Context) {
                             onSettings = { stack.add(SCREEN_SETTINGS) },
                             onOpenFiles = { stack.add(SCREEN_FILES) },
                             onToolbox = { stack.add(SCREEN_TOOLBOX) },
-                            onOpenBrowser = { stack.add("${PREFIX_BROWSER}https://www.baidu.com") },
+                            onOpenBrowser = { stack.add(PREFIX_BROWSER) },
                             onOpenUrl = { url -> stack.add("$PREFIX_BROWSER$url") },
                             onOpenFile = { path -> openFile(context, path) },
                             onPassword = { stack.add(SCREEN_PASSWORD) },
